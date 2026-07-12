@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Auto-sync**: A `Stop` hook in `.claude/settings.json` automatically runs `git add -A && git commit && git push origin master` every time the Claude Code session ends. No manual git commands needed — your work is always saved and pushed to GitHub.
+
 ## Project Overview
 
 中国机器人大赛 RoboCup 机器人先进视觉赛项 — **3D识别项目** (2026赛季)。
