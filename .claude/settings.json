@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "mcp__codegraph__*"
+      "mcp__codegraph__*",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git status*)"
     ]
   },
   "hooks": {
@@ -11,6 +15,16 @@
           {
             "type": "command",
             "command": "codegraph prompt-hook"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"C:/Users/25235/Documents/machine_vision/3D_Recongise\" && git add -A && git diff --cached --quiet || (git commit -m \"auto: session checkpoint $(date '+%Y-%m-%d %H:%M')\" && git push origin master) || true"
           }
         ]
       }
