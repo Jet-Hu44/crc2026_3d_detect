@@ -32,6 +32,11 @@ docs/pdfscribe/*/extracts/
 # CodeGraph index
 .codegraph/
 
+# Claude Code config (local only)
+CLAUDE.md
+.claude/
+.mcp.json
+
 # IDE
 .vscode/
 .idea/
