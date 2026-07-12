@@ -1,0 +1,60 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Large PDFs (16MB+)
+OrangePi_AI_Pro_昇腾_用户手册_v1.2.pdf
+
+# Model weights — base models (re-downloadable)
+yolov8n.pt
+yolov8s.pt
+yolo11n.pt
+yolo11s.pt
+
+# Build artifacts
+build/
+*.so
+*.pyd
+*.dll
+install/lib/
+
+# PDF extracts (generated, re-extractable)
+docs/pdfscribe/*/extracts/
+
+# CodeGraph index
+.codegraph/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+Log/
+*.log
+
+# Runtime outputs (generated at competition time)
+runss/labels/
+runss/d/
+runss/result/
+runss/*.avi
+result_r/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# CMake outputs
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
