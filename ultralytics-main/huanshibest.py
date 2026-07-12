@@ -21,6 +21,23 @@ import threading
 from ultralytics import YOLO
 from pyorbbecsdk import Config, OBSensorType, OBFormat, Pipeline, OBError, AlignFilter, OBStreamType
 
+class RoundConfig:
+    """两轮比赛配置"""
+    def __init__(self, round_num=2):
+        self.round_num = round_num
+        if round_num == 1:
+            self.num_tables = 1
+            self.tables = [1]
+            self.rotate = False
+            self.has_specific_light = False
+            self.detect_time_per_table = 20
+        else:
+            self.num_tables = 3
+            self.tables = [1, 2, 3]
+            self.rotate = True
+            self.has_specific_light = True
+            self.detect_time_per_table = 10
+
 class TemporalFilter:
     def __init__(self, alpha=0.5):
         self.alpha = alpha
@@ -283,9 +300,10 @@ class DetectWorker(QObject):
         self.detector.close()
 
 class MainWindow(QMainWindow):
-    def __init__(self, detector):
+    def __init__(self, detector, round_config=None):
         super().__init__()
         self.detector = detector
+        self.round_config = round_config if round_config else RoundConfig(round_num=2)
         self.initUI()
         self.initSocket()
         self.worker_thread = None
@@ -483,14 +501,17 @@ class MainWindow(QMainWindow):
             destination_file = os.path.join(destination_folder, base_name)
             shutil.copy(file, destination_file)
             print(f"Copied '{file}' to '{destination_file}'")
-    def process_detection_cycle(self):
-        folders = ['/home/HwHiAiUser/ultralytics-main/runss/d'] 
-        output_path = '/home/HwHiAiUser/ultralytics-main/runss/result/NEEPU-HS-R2.txt' 
+    def process_detection_cycle(self, current_table=1, round_num=2):
+        folders = ['/home/HwHiAiUser/ultralytics-main/runss/d']
+        result_filename = f'NEEPU-HS-R{round_num}.txt'
+        output_path = f'/home/HwHiAiUser/ultralytics-main/runss/result/{result_filename}'
         time.sleep(2)
-        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/labels') 
-        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/d') 
-        time.sleep(20)
-        self.move_txt_files('/home/HwHiAiUser/ultralytics-main/runss/labels', '/home/HwHiAiUser/ultralytics-main/runss/d') 
+        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/labels')
+        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/d')
+        # 检测时长: Round1单桌20秒, Round2每桌10秒
+        detect_time = 20 if round_num == 1 else 10
+        time.sleep(detect_time)
+        self.move_txt_files('/home/HwHiAiUser/ultralytics-main/runss/labels', '/home/HwHiAiUser/ultralytics-main/runss/d')
         time.sleep(0.5)
         total_counts = defaultdict(int)
         for folder in folders:
@@ -500,22 +521,85 @@ class MainWindow(QMainWindow):
         with open(output_path, 'w') as f:
             f.write("START\n")
             for word, count in total_counts.items():
-                f.write(f"Goal_ID={word};Num={count}\n")
+                f.write(f"Goal_ID={word};Num={count};Table={current_table}\n")
             f.write("END\n")
-        print(f"NEEPU-HS-R2.txt已生成,路径为：{output_path}")
-        self.delete_all_files_in_folder('/home/HwHiAiUser/Desktop/result_r') 
+        print(f"{result_filename}已生成,路径为：{output_path}")
+        self.delete_all_files_in_folder('/home/HwHiAiUser/Desktop/result_r')
         time.sleep(0.5)
-        self.copy_txt_files('/home/HwHiAiUser/ultralytics-main/runss/result', '/home/HwHiAiUser/Desktop/result_r') 
-        file_path = '/home/HwHiAiUser/Desktop/result_r/NEEPU-HS-R2.txt' 
+        self.copy_txt_files('/home/HwHiAiUser/ultralytics-main/runss/result', '/home/HwHiAiUser/Desktop/result_r')
+        file_path = f'/home/HwHiAiUser/Desktop/result_r/{result_filename}'
         self.send_file(1, file_path)
         self.s.close()
         print("关闭socket")
         time.sleep(5)
-        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/result') 
+        self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/result')
+
+    def send_rotate_command(self, table_id):
+        """向裁判盒发送相机旋转指令
+
+        协议: datatype=2为控制指令, 消息体为ROTATE:{table_id}
+        裁判盒收到后控制电机旋转相机至对应目标台位置
+        (具体协议格式待QQ群确认后调整)
+        """
+        msg = f"ROTATE:{table_id}"
+        print(f"发送旋转指令: {msg}")
+        self.send_string(2, msg)
+        # 等待相机旋转到目标位置（保守等待，比赛时按实际转速调整）
+        time.sleep(3)
+
+    def process_round2_full(self):
+        """Round 2完整流程: 旋转→检测→旋转→检测→旋转→检测
+
+        三张目标台呈三角形分布，相机依次旋转并检测每个桌台。
+        Table编号按旋转顺序映射: 第一位置=Table 1, 第二位置=Table 2, 第三位置=Table 3
+        """
+        all_results = {}
+        result_dir = '/home/HwHiAiUser/ultralytics-main/runss/result'
+        final_output = f'{result_dir}/NEEPU-HS-R2.txt'
+
+        for table_id in [1, 2, 3]:
+            print(f"\n===== Round 2: 开始检测 Table {table_id} =====")
+            if table_id > 1:
+                self.send_rotate_command(table_id)
+
+            # 清除上一桌台的临时文件
+            self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/labels')
+            self.delete_all_files_in_folder('/home/HwHiAiUser/ultralytics-main/runss/d')
+            time.sleep(1)
+
+            # 检测当前桌台（每桌台10秒）
+            time.sleep(10)
+            self.move_txt_files('/home/HwHiAiUser/ultralytics-main/runss/labels', '/home/HwHiAiUser/ultralytics-main/runss/d')
+            time.sleep(0.5)
+
+            # 处理当前桌台结果
+            stable_targets = self.process_folder('/home/HwHiAiUser/ultralytics-main/runss/d', min_occurrences=5)
+            for word, count in stable_targets.items():
+                key = f"{word}_T{table_id}"
+                all_results[key] = (word, count, table_id)
+
+        # 合并写入最终结果文件
+        os.makedirs(result_dir, exist_ok=True)
+        with open(final_output, 'w') as f:
+            f.write("START\n")
+            for word, count, table_id in all_results.values():
+                f.write(f"Goal_ID={word};Num={count};Table={table_id}\n")
+            f.write("END\n")
+
+        print(f"\n===== Round 2 全部桌台检测完成 =====")
+        print(f"NEEPU-HS-R2.txt已生成, 路径: {final_output}")
+        self.delete_all_files_in_folder('/home/HwHiAiUser/Desktop/result_r')
+        time.sleep(0.5)
+        self.copy_txt_files(result_dir, '/home/HwHiAiUser/Desktop/result_r')
+        self.send_file(1, '/home/HwHiAiUser/Desktop/result_r/NEEPU-HS-R2.txt')
+        self.s.close()
+        print("关闭socket")
+        time.sleep(3)
+        self.delete_all_files_in_folder(result_dir)
 
     def start_detection(self):
-        self.status_label.setText("识别中") 
-        self.send_team_id(0, "Y2507T1892934")  
+        self.status_label.setText("识别中")
+        self.send_team_id(0, "Y2507T1892934")
         os.makedirs(self.txt_output_folder, exist_ok=True)
         self.frame_idx = 0
         self.worker_thread = QThread()
@@ -525,7 +609,12 @@ class MainWindow(QMainWindow):
         self.worker.result_ready.connect(self.on_result_ready)
         self.worker_thread.started.connect(self.worker.start)
         self.worker_thread.start()
-        threading.Thread(target=self.process_detection_cycle).start()
+        # 根据轮次选择检测流程
+        if self.round_config.round_num == 2:
+            threading.Thread(target=self.process_round2_full).start()
+        else:
+            threading.Thread(target=self.process_detection_cycle,
+                           kwargs={'current_table': 1, 'round_num': 1}).start()
 
     def stop_detection(self):
         if self.worker:
@@ -580,8 +669,23 @@ class MainWindow(QMainWindow):
         self.start_detection()
 
 if __name__ == '__main__':
-    detector = YoloOrbbecDetector(weights='best4.pt', device='0') 
+    parser = argparse.ArgumentParser(description='3D识别比赛程序')
+    parser.add_argument('--round', type=int, choices=[1, 2], default=2,
+                       help='比赛轮次: 1=单桌台无光源, 2=三桌台旋转+特定光源')
+    parser.add_argument('--weights', type=str, default='best4.pt',
+                       help='模型权重文件路径')
+    parser.add_argument('--device', type=str, default='0',
+                       help='推理设备: 0=CPU, 或NPU设备ID')
+    args = parser.parse_args()
+
+    round_config = RoundConfig(round_num=args.round)
+    print(f"===== 3D识别比赛程序 =====")
+    print(f"轮次: Round {args.round}  |  桌台数: {round_config.num_tables}")
+    print(f"旋转: {'是' if round_config.rotate else '否'}  |  特定光源: {'是' if round_config.has_specific_light else '否'}")
+    print(f"模型: {args.weights}  |  设备: {args.device}")
+
+    detector = YoloOrbbecDetector(weights=args.weights, device=args.device)
     app = QApplication(sys.argv)
-    main_window = MainWindow(detector)
+    main_window = MainWindow(detector, round_config=round_config)
     main_window.show()
     sys.exit(app.exec_())
