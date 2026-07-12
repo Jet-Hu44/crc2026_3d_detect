@@ -20,6 +20,7 @@ from PyQt5.QtCore import Qt, QTimer, QThread, QObject, pyqtSignal
 import threading
 from ultralytics import YOLO
 from pyorbbecsdk import Config, OBSensorType, OBFormat, Pipeline, OBError, AlignFilter, OBStreamType
+from ocr_module import LightweightOCR
 
 class RoundConfig:
     """两轮比赛配置"""
@@ -61,6 +62,9 @@ class YoloOrbbecDetector:
             self.names = self.model.names
         except Exception as e:
             print(f"YOLO模型加载失败:{e}")
+        # 初始化OCR（用于W类未知物品表面文字识别）
+        self.ocr = LightweightOCR()
+        self._w_class_ids = self._detect_w_class_ids()
         self.pipeline = None
         self.align = None
         self.depth_available = False
@@ -121,6 +125,36 @@ class YoloOrbbecDetector:
         except Exception as e:
             print(f"相机启动失败:{e}")
             self.pipeline = None
+
+    def _detect_w_class_ids(self):
+        """自动检测W类(class名称以'W'开头)的类别ID列表"""
+        w_ids = []
+        for cls_id, name in self.names.items():
+            if isinstance(name, str) and name.startswith('W'):
+                w_ids.append(cls_id)
+        print(f"W类物品ID: {w_ids} (名称: {[self.names[i] for i in w_ids]})")
+        return w_ids
+
+    def _ocr_classify(self, image, bbox, yolo_name):
+        """对检测到的W类物品进行OCR分类
+
+        Args:
+            image: BGR图像
+            bbox: (x1, y1, x2, y2) 检测框
+            yolo_name: YOLO原始分类名称(如 'W001')
+
+        Returns:
+            修正后的类别名称
+        """
+        if not self._w_class_ids or not self.ocr:
+            return yolo_name
+
+        recognized = self.ocr.recognize(image, bbox)
+        if recognized:
+            subclass = self.ocr.classify_subclass(recognized)
+            if subclass:
+                return subclass
+        return yolo_name  # OCR失败则保持YOLO外观分类
 
     def frame_to_bgr_image(self, frame):
         if frame is None:
@@ -201,6 +235,12 @@ class YoloOrbbecDetector:
                         x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
                         cls_id = int(cls_id)
                         name = self.names[cls_id]
+                        # W类物品: OCR识别表面文字以确定子类
+                        if cls_id in self._w_class_ids and self.ocr.available:
+                            ocr_name = self._ocr_classify(opencv_image, (x1, y1, x2, y2), name)
+                            if ocr_name != name:
+                                print(f"  OCR修正: {name} → {ocr_name}")
+                                name = ocr_name
                         cx = int((x1 + x2) / 2)
                         cy = int((y1 + y2) / 2)
                         distance = None
