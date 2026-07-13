@@ -167,8 +167,7 @@ class MainWindow(QMainWindow):
     def start_detection(self):
         """启动检测线程 + 后台流程控制"""
         self.status_label.setText("识别中")
-        self.judge.send_team_id()
-        self.judge.send_signal_start()  # ← NEW: 开始识别信号
+        self.judge.send_start()  # DataType 0 = 队伍ID + 开始计时
 
         os.makedirs(LABELS_DIR, exist_ok=True)
         self.frame_idx = 0
@@ -201,7 +200,7 @@ class MainWindow(QMainWindow):
         for table_id in self.round_config.tables:
             print(f"\n===== Round 2: Table {table_id} =====")
             if table_id > 1:
-                self.judge.send_rotate_command(table_id)
+                self.judge.send_rotate(table_id)  # DataType 3 = 转台旋转信号
 
             # 清理上一桌台的临时文件
             JudgeBoxClient.delete_all_files_in_folder(LABELS_DIR)
@@ -227,7 +226,7 @@ class MainWindow(QMainWindow):
             f.write("END\n")
         print(f"===== Round 2 完成: {final_path} =====")
 
-        self.judge.send_signal_end()  # ← NEW: 结束识别信号
+        # send_result_file (DataType 1) 自动停止计时，无需单独发送结束信号
         self._finish(final_path)
 
     def _detect_single_table(self, table_id, output_path):
@@ -252,7 +251,7 @@ class MainWindow(QMainWindow):
             f.write("END\n")
         print(f"{output_path} 已生成")
 
-        self.judge.send_signal_end()  # ← NEW: 结束识别信号
+        # send_result_file (DataType 1) 自动停止计时，无需单独发送结束信号
         self._finish(output_path)
 
     def _finish(self, result_path):
