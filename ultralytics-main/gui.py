@@ -105,57 +105,81 @@ class MainWindow(QMainWindow):
     # ==================== UI ====================
 
     def init_ui(self):
-        self.setWindowTitle('3D视觉识别')
-        self.setGeometry(100, 100, 800, 500)
-        self.setStyleSheet("background-color:white;")
+        self.setWindowTitle('3D视觉识别 — NEEPU-HS')
+        self.setGeometry(100, 100, 960, 540)
+        self.setStyleSheet("background-color:#f5f5f5;")
 
-        h_layout = QHBoxLayout()
+        # 主容器
+        central = QWidget(self)
+        h_layout = QHBoxLayout(central)
+        h_layout.setContentsMargins(12, 12, 12, 12)
+        h_layout.setSpacing(12)
 
-        # 左侧: 图像显示
-        self.image_label = QLabel(self)
-        self.image_label.setFixedSize(500, 400)
-        self.image_label.setStyleSheet("border:black;")
-        h_layout.addWidget(self.image_label)
+        # ====== 左侧: 实时画面 ======
+        left_panel = QVBoxLayout()
+        cam_label = QLabel('📷 实时画面')
+        cam_label.setFont(QFont('Arial', 12, QFont.Bold))
+        cam_label.setStyleSheet("color:#333;")
+        left_panel.addWidget(cam_label)
 
-        # 右侧: 结果+状态+按钮
-        v_layout = QVBoxLayout()
-        v_layout.addSpacing(20)
+        self.image_label = QLabel()
+        self.image_label.setFixedSize(640, 480)
+        self.image_label.setStyleSheet(
+            "border:2px solid #ccc; border-radius:6px; background-color:#fff;")
+        self.image_label.setAlignment(Qt.AlignCenter)
+        left_panel.addWidget(self.image_label)
+        left_panel.addStretch()
+        h_layout.addLayout(left_panel, stretch=3)
 
-        results_label = QLabel('识别结果', self)
-        results_label.setFont(QFont('Arial', 14))
-        results_label.setAlignment(Qt.AlignLeft)
-        v_layout.addWidget(results_label)
+        # ====== 右侧: 结果面板 ======
+        right_panel = QVBoxLayout()
+        right_panel.setSpacing(10)
 
-        self.result_text = QTextEdit(self)
-        self.result_text.setReadOnly(True)
-        self.result_text.setFixedSize(300, 300)
-        self.result_text.setStyleSheet("border:black;")
-        self.result_text.setFont(QFont('Arial', 14))
-        v_layout.addWidget(self.result_text)
-
-        self.status_label = QLabel("准备中", self)
-        self.status_label.setFont(QFont('Arial', 16))
-        self.status_label.setFixedSize(300, 60)
+        # 状态标签
+        self.status_label = QLabel('⏳ 等待启动...')
+        self.status_label.setFont(QFont('Arial', 18, QFont.Bold))
+        self.status_label.setFixedHeight(44)
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setStyleSheet(
-            "background-color:lightgray;color:black;")
-        v_layout.addWidget(self.status_label)
+            "background-color:#e0e0e0; color:#333; "
+            "border-radius:8px; padding:4px;")
+        right_panel.addWidget(self.status_label)
 
-        self.start_button = QPushButton('启动中', self)
-        self.start_button.setFont(QFont('Arial', 15))
+        # 识别结果
+        results_label = QLabel('📋 实时识别结果')
+        results_label.setFont(QFont('Arial', 12, QFont.Bold))
+        results_label.setStyleSheet("color:#333;")
+        right_panel.addWidget(results_label)
+
+        self.result_text = QTextEdit()
+        self.result_text.setReadOnly(True)
+        self.result_text.setFont(QFont('Consolas', 12))
+        self.result_text.setStyleSheet(
+            "border:2px solid #ccc; border-radius:6px; "
+            "background-color:#fff; padding:6px;")
+        right_panel.addWidget(self.result_text, stretch=1)
+
+        # 启动按钮
+        btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
+        self.start_button = QPushButton('● 启动中')
+        self.start_button.setFont(QFont('Arial', 14, QFont.Bold))
+        self.start_button.setFixedSize(120, 120)
         self.start_button.setStyleSheet(
-            "QPushButton{background-color:#F9C49A;color:white;border-radius:50px;}"
-            "QPushButton:pressed{background-color:#FF8C00;}")
-        self.start_button.setFixedSize(100, 100)
+            "QPushButton{background-color:#FF9800; color:white; "
+            "border-radius:60px; border:none;}"
+            "QPushButton:pressed{background-color:#E65100;}"
+            "QPushButton:disabled{background-color:#BDBDBD;}")
         self.start_button.setEnabled(False)
         self.start_button.clicked.connect(self.start_detection)
-        v_layout.addWidget(self.start_button)
+        btn_layout.addWidget(self.start_button)
+        btn_layout.addStretch()
+        right_panel.addLayout(btn_layout)
 
-        v_layout.addStretch()
-        h_layout.addLayout(v_layout)
+        right_panel.addStretch()
+        h_layout.addLayout(right_panel, stretch=2)
 
-        self.setCentralWidget(QWidget(self))
-        self.setCentralWidget(h_layout.itemAt(0).widget())
+        self.setCentralWidget(central)
 
     # ==================== 网络 ====================
 
@@ -166,7 +190,10 @@ class MainWindow(QMainWindow):
 
     def start_detection(self):
         """启动检测线程 + 后台流程控制"""
-        self.status_label.setText("识别中")
+        self.status_label.setText('🔍 识别中...')
+        self.status_label.setStyleSheet(
+            "background-color:#FFF3E0; color:#E65100; "
+            "border-radius:8px; padding:4px;")
         self.judge.send_start()  # DataType 0 = 队伍ID + 开始计时
 
         os.makedirs(LABELS_DIR, exist_ok=True)
@@ -309,25 +336,31 @@ class MainWindow(QMainWindow):
     def display_image(self, image):
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         h, w, ch = rgb.shape
-        qt_img = QImage(rgb.data, w, h, w * ch, QImage.Format_RGB888)
+        bytes_per_line = w * ch
+        qt_img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qt_img).scaled(
-            self.image_label.width(), self.image_label.height())
+            self.image_label.width(), self.image_label.height(),
+            Qt.KeepAspectRatio, Qt.SmoothTransformation)
         self.image_label.setPixmap(pixmap)
 
     def display_results(self, result_list):
         self.result_text.clear()
+        # 统计每类物品数量
         counts = {}
         for r in result_list:
-            counts[r[0]] = counts.get(r[0], 0) + 1
-        for r in result_list:
-            obj, count = r[0], counts.get(r[0], 1)
+            name = r[0]
+            counts[name] = counts.get(name, 0) + 1
+
+        for name, count in sorted(counts.items()):
+            # 取该类的第一条记录获取距离
             dist_text = ""
-            if len(r) > 6 and r[6] is not None:
-                dist_m = r[6] / 1000
-                dist_text = f"{dist_m:.1f}m"
-                if DEPTH_MIN_MM / 1000 <= dist_m <= DEPTH_MAX_MM / 1000:
-                    dist_text = f'<span style="color:red;">{dist_text}</span>'
-            self.result_text.append(f'目标ID:{obj} 数量:{count},{dist_text}')
+            for r in result_list:
+                if r[0] == name and len(r) > 6 and r[6] is not None:
+                    dist_m = r[6] / 1000
+                    if DEPTH_MIN_MM / 1000 <= dist_m <= DEPTH_MAX_MM / 1000:
+                        dist_text = f"  ({dist_m:.2f}m)"
+                    break
+            self.result_text.append(f'{name} ×{count}{dist_text}')
 
     def stop_detection(self):
         if self.worker:
