@@ -85,9 +85,6 @@ class NPUDetector:
 
         # 7. output dataset
         self._output_size = acl.mdl.get_output_size_by_index(self._model_desc, 0)
-        for out_idx in range(1, acl.mdl.get_num_outputs(self._model_desc)):
-            self._output_size += acl.mdl.get_output_size_by_index(self._model_desc, out_idx)
-            print(f"[NPU] 多个输出: idx{out_idx} +{acl.mdl.get_output_size_by_index(self._model_desc, out_idx)}B")
 
         self._dev_output, ret = acl.rt.malloc(self._output_size, ACL_MALLOC_POLICY)
         assert ret == 0, f"malloc(output): {ret}"
@@ -134,15 +131,14 @@ class NPUDetector:
                                       ACL_MEMCPY_HOST_TO_DEVICE))
         assert ret == 0, f"memcpy H2D: {ret}"
 
-        # ③ execute
+        # ③ execute (CANN 7.0: 3 args, no stream)
         ret = _get_ret(acl.mdl.execute(self._model_id,
                                         self._input_ds,
-                                        self._output_ds,
-                                        self._stream))
+                                        self._output_ds))
         assert ret == 0, f"execute: {ret}"
 
-        # ④ sync
-        ret = _get_ret(acl.rt.synchronize_stream(self._stream))
+        # ④ sync device (streamless execute)
+        ret = _get_ret(acl.rt.synchronize_device())
         assert ret == 0, f"sync: {ret}"
 
         # ⑤ device → host (D2H)
@@ -151,11 +147,12 @@ class NPUDetector:
                                       ACL_MEMCPY_DEVICE_TO_HOST))
         assert ret == 0, f"memcpy D2H: {ret}"
 
-        # ⑥ host → numpy (H2H)
+        # ⑥ host → numpy — output is FP16 (ATC --output_type=FP16)
         output = np.ctypeslib.as_array(
-            ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_float)),
-            shape=(self._output_size // 4,))
-        return output.copy()
+            ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_uint16)),
+            shape=(self._output_size // 2,))
+        # FP16 → FP32
+        return output.view(np.float16).astype(np.float32)
 
     def close(self):
         try:
