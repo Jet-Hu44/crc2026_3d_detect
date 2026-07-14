@@ -21,7 +21,7 @@ class RoundConfig:
 
 
 # ========== 网络配置 ==========
-JUDGE_HOST = '192.168.1.88'
+JUDGE_HOST = '192.168.1.66'  # Windows PC 运行裁判盒 judgeGui.exe
 JUDGE_PORT = 6666
 LOCAL_IP = '192.168.1.67'
 NETMASK = '255.255.255.0'
