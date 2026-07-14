@@ -49,3 +49,4 @@ TEMPORAL_ALPHA = 0.7
 
 # ========== 模型 ==========
 DEFAULT_WEIGHTS = 'best4.pt'
+USE_NPU = True  # 是否使用 Ascend 310B4 NPU 推理（启动时自动检测 .om 文件）

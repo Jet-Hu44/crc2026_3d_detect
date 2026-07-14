@@ -3,7 +3,7 @@ YOLO + ORBBEC 相机检测器
 
 整合:
   - ORBBEC Astra Pro Plus RGBD相机 (pyorbbecsdk)
-  - YOLO物体检测 (ultralytics)
+  - YOLO物体检测 (ultralytics / NPU Ascend 310B4)
   - OCR文字识别 (ocr_module)
   - 深度时域滤波
 """
@@ -17,8 +17,15 @@ from pyorbbecsdk import Config, OBSensorType, Pipeline, AlignFilter, OBStreamTyp
 from ocr_module import LightweightOCR
 from config import (
     CONF_THRES, IOU_THRES, DEPTH_MIN_MM, DEPTH_MAX_MM,
-    TEMPORAL_ALPHA, DEFAULT_WEIGHTS,
+    TEMPORAL_ALPHA, DEFAULT_WEIGHTS, USE_NPU,
 )
+
+# 延迟导入 NPU 模块，避免在没有 CANN 环境的机器上崩溃
+try:
+    from npu_detector import NPUDetector, decode_npu_output
+    HAS_NPU = True
+except ImportError:
+    HAS_NPU = False
 
 
 class TemporalFilter:
@@ -37,21 +44,45 @@ class TemporalFilter:
 
 
 class YoloOrbbecDetector:
-    """YOLO检测器 + ORBBEC相机 + OCR"""
+    """YOLO检测器 + ORBBEC相机 + OCR — 支持 NPU/CPU 双路径"""
 
     def __init__(self, weights=DEFAULT_WEIGHTS, device='0', half=False):
         self.conf_thres = CONF_THRES
         self.device = device
         self.half = half
+        self.use_npu = USE_NPU and HAS_NPU
+        self.npu = None
+        self.num_classes = 8  # 默认 8 类
 
-        # YOLO模型
-        try:
-            self.model = YOLO(weights)
-            print(f"[检测器] YOLO模型已加载: {weights}, 类别数={len(self.model.names)}")
-            self.names = self.model.names
-        except Exception as e:
-            print(f"[检测器] YOLO模型加载失败: {e}")
-            raise
+        # ── 尝试 NPU 加载 ──
+        if self.use_npu:
+            om_path = weights.replace('.pt', '.om')
+            if not os.path.exists(om_path):
+                print(f"[检测器] .om 未找到 ({om_path})，回退 PyTorch CPU")
+                self.use_npu = False
+            else:
+                try:
+                    self.npu = NPUDetector(om_path)
+                    # 用 PyTorch 模型读一下类别名
+                    self.model = YOLO(weights)
+                    self.names = self.model.names
+                    self.num_classes = len(self.names)
+                    print(f"[检测器] ★ NPU 推理已启用: {om_path}, 类别数={self.num_classes}")
+                except Exception as e:
+                    print(f"[检测器] NPU 初始化失败: {e}，回退 PyTorch CPU")
+                    self.use_npu = False
+                    self.npu = None
+
+        # ── PyTorch CPU 路径 ──
+        if not self.use_npu:
+            try:
+                self.model = YOLO(weights)
+                self.names = self.model.names
+                self.num_classes = len(self.names)
+                print(f"[检测器] YOLO模型已加载(CPU): {weights}, 类别数={self.num_classes}")
+            except Exception as e:
+                print(f"[检测器] YOLO模型加载失败: {e}")
+                raise
 
         # OCR
         self.ocr = LightweightOCR()
@@ -209,23 +240,25 @@ class YoloOrbbecDetector:
             print(f"[检测器] 获取帧失败: {e}")
             return [], opencv_image or np.zeros((480, 640, 3), dtype=np.uint8)
 
-        # YOLO推理
+        # YOLO推理 — NPU 或 CPU 双路径
         try:
-            results = self.model(opencv_image, conf=self.conf_thres, iou=IOU_THRES)
-            if len(results) > 0 and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
-                for box in results[0].boxes.data.cpu().numpy():
-                    x1, y1, x2, y2, conf, cls_id = box
-                    x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
-                    cls_id = int(cls_id)
-                    name = self.names[cls_id]
+            if self.use_npu and self.npu is not None:
+                # ── NPU 推理 ──
+                raw = self.npu.infer(opencv_image)
+                ih, iw = opencv_image.shape[:2]
+                detections = decode_npu_output(
+                    raw, iw, ih,
+                    num_classes=self.num_classes,
+                    conf_thres=self.conf_thres,
+                    iou_thres=IOU_THRES,
+                )
+                for det in detections:
+                    x1, y1, x2, y2 = map(int, det[:4])
+                    conf = float(det[4])
+                    cls_id = int(det[5])
+                    name = self.names.get(cls_id, f'W{cls_id:03d}')
 
-                    # OCR: W类物品读表面文字
-                    if cls_id in self._w_class_ids and self.ocr.available:
-                        ocr_name = self._ocr_classify(opencv_image, (x1, y1, x2, y2), name)
-                        if ocr_name != name:
-                            print(f"  [OCR] {name} → {ocr_name}")
-                            name = ocr_name
-
+                    # OCR 跳过 (NPU 路径暂不接 OCR，先跑通基础检测)
                     # 深度测距
                     cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
                     distance = None
@@ -236,15 +269,49 @@ class YoloOrbbecDetector:
                             if DEPTH_MIN_MM < depth_mm < DEPTH_MAX_MM:
                                 distance = depth_mm
 
-                    result_list.append([name, float(conf), x1, y1, x2, y2, distance])
-
-                    # 可视化绘制
-                    cv2.rectangle(opencv_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-                    label = f"{name},{conf:.2f}"
+                    result_list.append([name, conf, x1, y1, x2, y2, distance])
+                    cv2.rectangle(opencv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    label = f"{name} {conf:.2f}"
                     if distance is not None:
-                        label += f",{distance:.0f}mm"
+                        label += f" {distance:.0f}mm"
                     cv2.putText(opencv_image, label, (x1 - 5, y1 - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+            else:
+                # ── PyTorch CPU 推理 ──
+                results = self.model(opencv_image, conf=self.conf_thres, iou=IOU_THRES)
+                if len(results) > 0 and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
+                    for box in results[0].boxes.data.cpu().numpy():
+                        x1, y1, x2, y2, conf, cls_id = box
+                        x1, y1, x2, y2 = map(int, [x1, y1, x2, y2])
+                        cls_id = int(cls_id)
+                        name = self.names[cls_id]
+
+                        # OCR: W类物品读表面文字
+                        if cls_id in self._w_class_ids and self.ocr.available:
+                            ocr_name = self._ocr_classify(opencv_image, (x1, y1, x2, y2), name)
+                            if ocr_name != name:
+                                print(f"  [OCR] {name} → {ocr_name}")
+                                name = ocr_name
+
+                        # 深度测距
+                        cx, cy = int((x1 + x2) / 2), int((y1 + y2) / 2)
+                        distance = None
+                        if depth_data is not None:
+                            if (0 <= cy < depth_data.shape[0]
+                                    and 0 <= cx < depth_data.shape[1]):
+                                depth_mm = depth_data[cy, cx]
+                                if DEPTH_MIN_MM < depth_mm < DEPTH_MAX_MM:
+                                    distance = depth_mm
+
+                        result_list.append([name, float(conf), x1, y1, x2, y2, distance])
+
+                        # 可视化绘制
+                        cv2.rectangle(opencv_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+                        label = f"{name},{conf:.2f}"
+                        if distance is not None:
+                            label += f",{distance:.0f}mm"
+                        cv2.putText(opencv_image, label, (x1 - 5, y1 - 10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
         except Exception as e:
             print(f"[检测器] YOLO推理失败: {e}")
 
@@ -276,3 +343,5 @@ class YoloOrbbecDetector:
         if self.pipeline is not None:
             self.pipeline.stop()
             print("[相机] 已关闭")
+        if self.npu is not None:
+            self.npu.close()
