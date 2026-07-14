@@ -254,8 +254,6 @@ class YoloOrbbecDetector:
                     conf_thres=self.conf_thres,
                     iou_thres=IOU_THRES,
                 )
-                print(f"[NPU] {len(detections)} detections: "
-                      f"{[(self.names.get(int(d[5]),'?'), round(float(d[4]),2)) for d in detections]}")
                 for det in detections:
                     x1, y1, x2, y2 = map(int, det[:4])
                     conf = float(det[4])
