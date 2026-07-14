@@ -61,7 +61,7 @@ class DetectWorker(QObject):
                 time.sleep(0.05)
                 continue
 
-            if any(r[1] >= 0.5 for r in result_list):
+            if any(r[1] >= self.detector.conf_thres for r in result_list):
                 self.detector.write_results_to_txt(
                     result_list, self.frame_idx, self.txt_output_folder)
             if self.save_video and self.out is not None:
