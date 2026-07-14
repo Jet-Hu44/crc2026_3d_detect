@@ -254,11 +254,17 @@ class YoloOrbbecDetector:
                     conf_thres=self.conf_thres,
                     iou_thres=IOU_THRES,
                 )
+                print(f"[NPU] {len(detections)} detections: "
+                      f"{[(self.names.get(int(d[5]),'?'), round(float(d[4]),2)) for d in detections]}")
                 for det in detections:
                     x1, y1, x2, y2 = map(int, det[:4])
                     conf = float(det[4])
                     cls_id = int(det[5])
                     name = self.names.get(cls_id, f'W{cls_id:03d}')
+                    # clamp 坐标到画面内
+                    ih, iw = opencv_image.shape[:2]
+                    x1, y1 = max(0, x1), max(0, y1)
+                    x2, y2 = min(iw, x2), min(ih, y2)
 
                     # OCR 跳过 (NPU 路径暂不接 OCR，先跑通基础检测)
                     # 深度测距

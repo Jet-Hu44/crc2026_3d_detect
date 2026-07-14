@@ -40,7 +40,7 @@ RESULT_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss/result'
 VIDEO_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss'
 
 # ========== 检测参数 ==========
-CONF_THRES = 0.50
+CONF_THRES = 0.35  # NPU FP16 略微降低阈值补偿精度损失
 IOU_THRES = 0.45
 DEPTH_MIN_MM = 100
 DEPTH_MAX_MM = 1600
