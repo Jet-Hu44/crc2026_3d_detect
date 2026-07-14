@@ -50,7 +50,7 @@ class NPUDetector:
         self._stream = None
 
         # 1. 初始化 ACL
-        ret = acl.init(None)
+        ret = acl.init("")
         _check_ret("acl.init", ret)
         print(f"[NPU] ACL 初始化完成")
 
