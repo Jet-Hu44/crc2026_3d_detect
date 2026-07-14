@@ -155,7 +155,14 @@ class NPUDetector:
         return output.view(np.float16).astype(np.float32)
 
     def close(self):
+        if getattr(self, '_closed', False):
+            return
+        self._closed = True
         try:
+            if hasattr(self, '_input_ds') and self._input_ds is not None:
+                acl.mdl.destroy_dataset(self._input_ds)
+            if hasattr(self, '_output_ds') and self._output_ds is not None:
+                acl.mdl.destroy_dataset(self._output_ds)
             if hasattr(self, '_dev_input') and self._dev_input:
                 acl.rt.free(self._dev_input)
             if hasattr(self, '_dev_output') and self._dev_output:
@@ -164,15 +171,11 @@ class NPUDetector:
                 acl.rt.free_host(self._host_input)
             if hasattr(self, '_host_output') and self._host_output:
                 acl.rt.free_host(self._host_output)
-            if hasattr(self, '_input_ds') and self._input_ds:
-                acl.mdl.destroy_dataset(self._input_ds)
-            if hasattr(self, '_output_ds') and self._output_ds:
-                acl.mdl.destroy_dataset(self._output_ds)
-            if hasattr(self, '_model_id') and self._model_id:
+            if hasattr(self, '_model_id') and self._model_id is not None:
                 acl.mdl.unload(self._model_id)
-            if hasattr(self, '_model_desc') and self._model_desc:
+            if hasattr(self, '_model_desc') and self._model_desc is not None:
                 acl.mdl.destroy_desc(self._model_desc)
-            if hasattr(self, '_stream') and self._stream:
+            if hasattr(self, '_stream') and self._stream is not None:
                 acl.rt.destroy_stream(self._stream)
         except:
             pass
@@ -181,10 +184,6 @@ class NPUDetector:
             acl.finalize()
         except:
             pass
-        print("[NPU] Released")
-
-    def __del__(self):
-        self.close()
 
 
 # ── YOLO 后处理 ────────────────────────────────────────────────────────
