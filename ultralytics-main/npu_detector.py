@@ -103,23 +103,39 @@ class NPUDetector:
         print(f"[NPU] Input: {self._input_size}B, Output: {self._output_size}B")
 
         # 9. warmup
-        dummy = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
+        dummy = np.zeros((480, 640, 3), dtype=np.uint8)
         for _ in range(2):
             self.infer(dummy)
         print("[NPU] Warmup done")
 
     def _preprocess(self, image):
-        """BGR → RGB → resize(640,640) → HWC→CHW → float32/255 → (1,3,640,640)"""
-        img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        img = cv2.resize(img, (self.imgsz, self.imgsz))
+        """BGR → letterbox(640,640) → RGB → HWC→CHW → /255 → (1,3,640,640)
+
+        返回 (input_tensor, ratio, (dw, dh)) 用于后续坐标还原
+        """
+        # Letterbox: 保持宽高比，黑边填充到 640x640
+        h0, w0 = image.shape[:2]
+        r = min(self.imgsz / h0, self.imgsz / w0)
+        new_w, new_h = int(round(w0 * r)), int(round(h0 * r))
+        dw = (self.imgsz - new_w) / 2
+        dh = (self.imgsz - new_h) / 2
+
+        img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+        left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+        img = cv2.copyMakeBorder(img, top, bottom, left, right,
+                                 cv2.BORDER_CONSTANT, value=(114, 114, 114))
+
+        # 转为模型输入格式
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         img = img.astype(np.float32) / 255.0
         img = np.transpose(img, (2, 0, 1))
         img = np.expand_dims(img, axis=0)
-        return np.ascontiguousarray(img)
+        return np.ascontiguousarray(img), r, (dw, dh)
 
     def infer(self, image):
-        """单帧 NPU 推理 → raw float32 numpy"""
-        input_np = self._preprocess(image)
+        """单帧 NPU 推理 → (raw_float32, ratio, (dw, dh))"""
+        input_np, ratio, (dw, dh) = self._preprocess(image)
         nbytes = input_np.nbytes
 
         # ① numpy → host memory (H2H)
@@ -152,7 +168,7 @@ class NPUDetector:
             ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_uint16)),
             shape=(self._output_size // 2,))
         # FP16 → FP32
-        return output.view(np.float16).astype(np.float32)
+        return output.view(np.float16).astype(np.float32), ratio, (dw, dh)
 
     def close(self):
         if getattr(self, '_closed', False):
@@ -199,10 +215,12 @@ def nms_fast(boxes, scores, iou_thres=0.45):
     return indices.flatten().astype(np.int32)
 
 
-def decode_npu_output(raw_output, img_w, img_h, num_classes=8,
-                      conf_thres=0.5, iou_thres=0.45):
+def decode_npu_output(raw_output, img_w, img_h, ratio=1.0, dw=0, dh=0,
+                      num_classes=8, conf_thres=0.5, iou_thres=0.45):
     """
     解码 NPU 输出 → (N, 6): [x1,y1,x2,y2,conf,cls_id]
+
+    ratio, dw, dh: letterbox 参数，用于还原到原始图像坐标
     """
     total = len(raw_output)
     nc = num_classes
@@ -225,11 +243,23 @@ def decode_npu_output(raw_output, img_w, img_h, num_classes=8,
     if not mask.any():
         return np.empty((0, 6))
 
-    cx, cy, w, h = boxes_raw[0, mask], boxes_raw[1, mask], boxes_raw[2, mask], boxes_raw[3, mask]
-    x1 = (cx - w / 2) * img_w
-    y1 = (cy - h / 2) * img_h
-    x2 = (cx + w / 2) * img_w
-    y2 = (cy + h / 2) * img_h
+    # 坐标映射：letterbox空间(640) → 原始图像空间
+    cx = boxes_raw[0, mask]
+    cy = boxes_raw[1, mask]
+    bw = boxes_raw[2, mask]
+    bh = boxes_raw[3, mask]
+
+    # 先去归一化到 letterbox 像素
+    x1 = (cx - bw / 2) * 640
+    y1 = (cy - bh / 2) * 640
+    x2 = (cx + bw / 2) * 640
+    y2 = (cy + bh / 2) * 640
+
+    # 还原 letterbox → 原始图像坐标
+    x1 = (x1 - dw) / ratio
+    y1 = (y1 - dh) / ratio
+    x2 = (x2 - dw) / ratio
+    y2 = (y2 - dh) / ratio
 
     boxes = np.stack([x1, y1, x2, y2], axis=1)
     scores = max_scores[mask]
@@ -253,11 +283,11 @@ if __name__ == '__main__':
     print(f"[Test] Loading {om_file} ...")
     d = NPUDetector(om_file)
 
-    dummy = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
+    dummy = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
     times = []
     for i in range(50):
         t0 = time.perf_counter()
-        _ = d.infer(dummy)
+        raw, r, (dw, dh) = d.infer(dummy)
         t = (time.perf_counter() - t0) * 1000
         if i >= 5:
             times.append(t)

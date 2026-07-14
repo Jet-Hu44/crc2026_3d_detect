@@ -245,10 +245,11 @@ class YoloOrbbecDetector:
         try:
             if self.use_npu and self._init_npu_lazy():
                 # ── NPU 推理 ──
-                raw = self.npu.infer(opencv_image)
+                raw, ratio, (dw, dh) = self.npu.infer(opencv_image)
                 ih, iw = opencv_image.shape[:2]
                 detections = decode_npu_output(
                     raw, iw, ih,
+                    ratio=ratio, dw=dw, dh=dh,
                     num_classes=self.num_classes,
                     conf_thres=self.conf_thres,
                     iou_thres=IOU_THRES,
