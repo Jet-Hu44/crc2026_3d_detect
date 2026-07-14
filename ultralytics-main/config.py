@@ -31,13 +31,13 @@ TEAM_ID = 'Y2507T1892934'
 TEAM_NAME = 'NEEPU-HS'  # 东北电力大学-幻视
 
 # ========== 路径配置（香橙派上） ==========
-HOME_DIR = '/home/HwHiAiUser/ultralytics-main'
+HOME_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main'
 DESKTOP_RESULT_DIR = '/home/HwHiAiUser/Desktop/result_r'
-RUNSS_DIR = '/home/HwHiAiUser/ultralytics-main/runss'
-LABELS_DIR = '/home/HwHiAiUser/ultralytics-main/runss/labels'
-D_DIR = '/home/HwHiAiUser/ultralytics-main/runss/d'
-RESULT_DIR = '/home/HwHiAiUser/ultralytics-main/runss/result'
-VIDEO_DIR = '/home/HwHiAiUser/ultralytics-main/runss'
+RUNSS_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss'
+LABELS_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss/labels'
+D_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss/d'
+RESULT_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss/result'
+VIDEO_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main/runss'
 
 # ========== 检测参数 ==========
 CONF_THRES = 0.50

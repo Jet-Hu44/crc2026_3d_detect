@@ -49,7 +49,7 @@ fi
 
 # ── 3. 设置环境变量 ────────────────────────────────────────────────────────
 echo "[3/5] 设置 Python 环境..."
-export PYTHONPATH=$PYTHONPATH:/home/HwHiAiUser/ultralytics-main/install/lib/
+export PYTHONPATH=$PYTHONPATH:/home/HwHiAiUser/Desktop/Round/ultralytics-main/install/lib/
 
 # 激活 conda 环境（如果存在）
 if [ -f /usr/local/miniconda3/etc/profile.d/conda.sh ]; then
@@ -62,7 +62,7 @@ fi
 
 # ── 4. 切换工作目录 ────────────────────────────────────────────────────────
 echo "[4/5] 切换到工作目录..."
-cd /home/HwHiAiUser/ultralytics-main
+cd /home/HwHiAiUser/Desktop/Round/ultralytics-main
 echo "      当前目录: $(pwd)"
 
 # 检查模型文件
