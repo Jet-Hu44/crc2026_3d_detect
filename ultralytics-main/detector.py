@@ -52,37 +52,23 @@ class YoloOrbbecDetector:
         self.half = half
         self.use_npu = USE_NPU and HAS_NPU
         self.npu = None
+        self._om_path = weights.replace('.pt', '.om')
         self.num_classes = 8  # 默认 8 类
 
-        # ── 尝试 NPU 加载 ──
-        if self.use_npu:
-            om_path = weights.replace('.pt', '.om')
-            if not os.path.exists(om_path):
-                print(f"[检测器] .om 未找到 ({om_path})，回退 PyTorch CPU")
-                self.use_npu = False
-            else:
-                try:
-                    self.npu = NPUDetector(om_path)
-                    # 用 PyTorch 模型读一下类别名
-                    self.model = YOLO(weights)
-                    self.names = self.model.names
-                    self.num_classes = len(self.names)
-                    print(f"[检测器] ★ NPU 推理已启用: {om_path}, 类别数={self.num_classes}")
-                except Exception as e:
-                    print(f"[检测器] NPU 初始化失败: {e}，回退 PyTorch CPU")
-                    self.use_npu = False
-                    self.npu = None
+        # ── 检查 NPU 模型文件 ──
+        if self.use_npu and not os.path.exists(self._om_path):
+            print(f"[检测器] .om 未找到 ({self._om_path})，回退 PyTorch CPU")
+            self.use_npu = False
 
-        # ── PyTorch CPU 路径 ──
-        if not self.use_npu:
-            try:
-                self.model = YOLO(weights)
-                self.names = self.model.names
-                self.num_classes = len(self.names)
-                print(f"[检测器] YOLO模型已加载(CPU): {weights}, 类别数={self.num_classes}")
-            except Exception as e:
-                print(f"[检测器] YOLO模型加载失败: {e}")
-                raise
+        # ── 先加载 PyTorch 模型（读类别名用）──
+        try:
+            self.model = YOLO(weights)
+            self.names = self.model.names
+            self.num_classes = len(self.names)
+            print(f"[检测器] YOLO模型已加载(CPU): {weights}, 类别数={self.num_classes}")
+        except Exception as e:
+            print(f"[检测器] YOLO模型加载失败: {e}")
+            raise
 
         # OCR
         self.ocr = LightweightOCR()
@@ -191,6 +177,21 @@ class YoloOrbbecDetector:
 
     # ==================== 推理 ====================
 
+    def _init_npu_lazy(self):
+        """延迟初始化 NPU — 在推理线程中调用，确保 ACL 资源正确绑定"""
+        if self.npu is not None:
+            return True
+        if not self.use_npu:
+            return False
+        try:
+            self.npu = NPUDetector(self._om_path)
+            print(f"[检测器] ★ NPU 推理已启用 (线程延迟初始化): {self._om_path}")
+            return True
+        except Exception as e:
+            print(f"[检测器] NPU 延迟初始化失败: {e}，回退 CPU")
+            self.use_npu = False
+            return False
+
     def inference_image(self, opencv_image=None):
         """单帧推理: 获取相机帧 → YOLO检测 → OCR(W类) → 返回结果列表+图像"""
         result_list = []
@@ -242,7 +243,7 @@ class YoloOrbbecDetector:
 
         # YOLO推理 — NPU 或 CPU 双路径
         try:
-            if self.use_npu and self.npu is not None:
+            if self.use_npu and self._init_npu_lazy():
                 # ── NPU 推理 ──
                 raw = self.npu.infer(opencv_image)
                 ih, iw = opencv_image.shape[:2]
