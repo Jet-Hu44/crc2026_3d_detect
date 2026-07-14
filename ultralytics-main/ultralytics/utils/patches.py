@@ -9,7 +9,10 @@ import numpy as np
 import torch
 
 # OpenCV Multilanguage-friendly functions ------------------------------------------------------------------------------
-_imshow = cv2.imshow  # copy to avoid recursion errors
+try:
+    _imshow = cv2.imshow  # copy to avoid recursion errors
+except AttributeError:
+    _imshow = lambda *a, **kw: None  # headless/ARM opencv lacks imshow
 
 
 def imread(filename: str, flags: int = cv2.IMREAD_COLOR):
