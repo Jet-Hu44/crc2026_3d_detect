@@ -83,7 +83,7 @@ echo "  按 Ctrl+C 可手动中止"
 echo "=============================================="
 echo ""
 
-python3 huanshibest.py --round ${ROUND} --weights ${WEIGHTS}
+DISPLAY=:0 python3 huanshibest.py --round ${ROUND} --weights ${WEIGHTS}
 
 # ── 完成 ───────────────────────────────────────────────────────────────────
 EXIT_CODE=$?
