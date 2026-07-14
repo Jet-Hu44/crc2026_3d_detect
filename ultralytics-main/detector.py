@@ -214,17 +214,19 @@ class YoloOrbbecDetector:
             if frames is None:
                 return [], opencv_image or np.zeros((480, 640, 3), dtype=np.uint8)
 
-            if self.depth_available and self.align is not None:
-                try:
-                    frames = self.align.process(frames)
-                except:
-                    pass
-
+            # 先取彩色帧（对齐前）
             color_frame = frames.get_color_frame()
             if color_frame is None:
                 return [], opencv_image or np.zeros((480, 640, 3), dtype=np.uint8)
 
             opencv_image = self.frame_to_bgr_image(color_frame)
+
+            # 深度对齐：只影响深度帧，彩色帧已在上面拿到
+            if self.depth_available and self.align is not None:
+                try:
+                    frames = self.align.process(frames)
+                except:
+                    pass
 
             if self.depth_available:
                 depth_frame = frames.get_depth_frame()
