@@ -1,5 +1,5 @@
 """
-NPU 推理模块 — Ascend 310B4 加速 YOLO 检测 (CANN 7.0)
+NPU 推理模块 — Ascend 310B4 + CANN 7.0
 
 用法:
     detector = NPUDetector('best4.om')
@@ -8,25 +8,32 @@ NPU 推理模块 — Ascend 310B4 加速 YOLO 检测 (CANN 7.0)
 
 import os
 import sys
+import ctypes
 import numpy as np
 import cv2
 
-CANN_PYTHON = '/usr/local/Ascend/ascend-toolkit/latest/python/site-packages'
-if CANN_PYTHON not in sys.path:
-    sys.path.append(CANN_PYTHON)
-
+sys.path.append('/usr/local/Ascend/ascend-toolkit/latest/python/site-packages')
 import acl
 
-# CANN 7.0 移除了大部分常量，硬编码
+# CANN 7.0 方向常量 (Python 层不暴露，硬编码)
 ACL_MEMCPY_HOST_TO_DEVICE = 1
 ACL_MEMCPY_DEVICE_TO_HOST = 2
+ACL_MEMCPY_HOST_TO_HOST = 3
+ACL_MALLOC_POLICY = 0  # acl.rt.malloc 第二个参数
 
 
-def _safe_ret(ret):
-    """CANN 7.0 有时返回 (value, code) 有时直接返回 code"""
-    if isinstance(ret, tuple):
-        return ret[-1]
-    return ret
+def _get_ret(result):
+    """CANN 7.0 函数返回 (value, code) 元组时取 code"""
+    if isinstance(result, tuple):
+        return result[-1]
+    return result
+
+
+def _get_val(result):
+    """取 (value, code) 元组的 value"""
+    if isinstance(result, tuple) and len(result) >= 2:
+        return result[0]
+    return result
 
 
 class NPUDetector:
@@ -34,86 +41,78 @@ class NPUDetector:
 
     def __init__(self, om_path, imgsz=640):
         if not os.path.exists(om_path):
-            raise FileNotFoundError(f"模型文件不存在: {om_path}")
+            raise FileNotFoundError(f"模型不存在: {om_path}")
 
         self.imgsz = imgsz
         self.device_id = 0
-        self._model_id = None
-        self._model_desc = None
-        self._input_buffer = None
-        self._output_buffer = None
-        self._input_dataset = None
-        self._output_dataset = None
-        self._stream = None
-        self._input_size = 0
-        self._output_size = 0
 
-        # 1. 初始化 ACL
-        ret = _safe_ret(acl.init(""))
-        if ret != 0:
-            raise RuntimeError(f"acl.init failed: {ret}")
-        print("[NPU] ACL 初始化完成")
+        # 1. init ACL
+        ret = _get_ret(acl.init(""))
+        assert ret == 0, f"acl.init: {ret}"
+        print("[NPU] ACL init OK")
 
-        # 2. 设置设备
-        ret = _safe_ret(acl.rt.set_device(self.device_id))
-        if ret != 0:
-            raise RuntimeError(f"set_device failed: {ret}")
+        # 2. set device
+        ret = _get_ret(acl.rt.set_device(self.device_id))
+        assert ret == 0, f"set_device: {ret}"
 
-        # 3. 创建流
+        # 3. create stream
         stream_result = acl.rt.create_stream()
-        if isinstance(stream_result, tuple):
-            self._stream = stream_result[0]
-        else:
-            self._stream = stream_result
+        self._stream = _get_val(stream_result)
+        ret = _get_ret(stream_result)
+        assert ret == 0, f"create_stream: {ret}"
 
-        # 4. 加载模型
+        # 4. load model
         load_result = acl.mdl.load_from_file(om_path)
-        if isinstance(load_result, tuple):
-            self._model_id = load_result[0]
-        else:
-            self._model_id = load_result
-        print(f"[NPU] 模型已加载: {os.path.basename(om_path)}")
+        self._model_id = _get_val(load_result)
+        ret = _get_ret(load_result)
+        assert ret == 0, f"load_from_file: {ret}"
+        print(f"[NPU] Model loaded: {os.path.basename(om_path)}")
 
-        # 5. 获取模型描述
+        # 5. model desc
         self._model_desc = acl.mdl.create_desc()
-        ret = _safe_ret(acl.mdl.get_desc(self._model_desc, self._model_id))
-        if ret != 0:
-            raise RuntimeError(f"get_desc failed: {ret}")
+        ret = _get_ret(acl.mdl.get_desc(self._model_desc, self._model_id))
+        assert ret == 0, f"get_desc: {ret}"
 
-        # 6. 分配输入内存
+        # 6. input dataset
         self._input_size = acl.mdl.get_input_size_by_index(self._model_desc, 0)
-        malloc_result = acl.rt.malloc(self._input_size)
-        if isinstance(malloc_result, tuple):
-            self._input_buffer = malloc_result[0]
-        else:
-            self._input_buffer = malloc_result
+        self._dev_input, ret = acl.rt.malloc(self._input_size, ACL_MALLOC_POLICY)
+        assert ret == 0, f"malloc(input): {ret}"
 
-        self._input_dataset = acl.mdl.create_dataset()
-        input_buf = acl.create_data_buffer(self._input_buffer, self._input_size)
-        acl.mdl.add_dataset_buffer(self._input_dataset, input_buf)
+        self._input_ds = acl.mdl.create_dataset()
+        in_buf = acl.create_data_buffer(self._dev_input, self._input_size)
+        ret = _get_ret(acl.mdl.add_dataset_buffer(self._input_ds, in_buf))
+        assert ret == 0, f"add_dataset_buffer(input): {ret}"
 
-        # 7. 分配输出内存
+        # 7. output dataset
         self._output_size = acl.mdl.get_output_size_by_index(self._model_desc, 0)
-        malloc_result = acl.rt.malloc(self._output_size)
-        if isinstance(malloc_result, tuple):
-            self._output_buffer = malloc_result[0]
-        else:
-            self._output_buffer = malloc_result
+        for out_idx in range(1, acl.mdl.get_num_outputs(self._model_desc)):
+            self._output_size += acl.mdl.get_output_size_by_index(self._model_desc, out_idx)
+            print(f"[NPU] 多个输出: idx{out_idx} +{acl.mdl.get_output_size_by_index(self._model_desc, out_idx)}B")
 
-        self._output_dataset = acl.mdl.create_dataset()
-        output_buf = acl.create_data_buffer(self._output_buffer, self._output_size)
-        acl.mdl.add_dataset_buffer(self._output_dataset, output_buf)
+        self._dev_output, ret = acl.rt.malloc(self._output_size, ACL_MALLOC_POLICY)
+        assert ret == 0, f"malloc(output): {ret}"
 
-        print(f"[NPU] 输入: {self._input_size} bytes, 输出: {self._output_size} bytes")
+        self._output_ds = acl.mdl.create_dataset()
+        out_buf = acl.create_data_buffer(self._dev_output, self._output_size)
+        ret = _get_ret(acl.mdl.add_dataset_buffer(self._output_ds, out_buf))
+        assert ret == 0, f"add_dataset_buffer(output): {ret}"
 
-        # 8. 预热
+        # 8. host memory for transfers
+        self._host_input, ret = acl.rt.malloc_host(self._input_size)
+        assert ret == 0, f"malloc_host(input): {ret}"
+        self._host_output, ret = acl.rt.malloc_host(self._output_size)
+        assert ret == 0, f"malloc_host(output): {ret}"
+
+        print(f"[NPU] Input: {self._input_size}B, Output: {self._output_size}B")
+
+        # 9. warmup
         dummy = np.zeros((imgsz, imgsz, 3), dtype=np.uint8)
         for _ in range(2):
             self.infer(dummy)
-        print("[NPU] 预热完成")
+        print("[NPU] Warmup done")
 
     def _preprocess(self, image):
-        """BGR → RGB → resize → HWC→CHW → float32[0,1] → NCHW"""
+        """BGR → RGB → resize(640,640) → HWC→CHW → float32/255 → (1,3,640,640)"""
         img = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
         img = cv2.resize(img, (self.imgsz, self.imgsz))
         img = img.astype(np.float32) / 255.0
@@ -122,68 +121,70 @@ class NPUDetector:
         return np.ascontiguousarray(img)
 
     def infer(self, image):
-        """单帧推理 → 返回 raw float32 numpy 数组"""
+        """单帧 NPU 推理 → raw float32 numpy"""
         input_np = self._preprocess(image)
         nbytes = input_np.nbytes
 
-        # H2D
-        ret = _safe_ret(acl.rt.memcpy(self._input_buffer, self._input_size,
-                                       input_np.tobytes(), nbytes,
-                                       ACL_MEMCPY_HOST_TO_DEVICE))
-        if ret != 0:
-            raise RuntimeError(f"memcpy H2D failed: {ret}")
+        # ① numpy → host memory (H2H)
+        ctypes.memmove(self._host_input, input_np.ctypes.data, nbytes)
 
-        # Execute
-        ret = _safe_ret(acl.mdl.execute(self._model_id,
-                                         self._input_dataset,
-                                         self._output_dataset,
-                                         self._stream))
-        if ret != 0:
-            raise RuntimeError(f"mdl.execute failed: {ret}")
+        # ② host → device (H2D)
+        ret = _get_ret(acl.rt.memcpy(self._dev_input, self._input_size,
+                                      self._host_input, nbytes,
+                                      ACL_MEMCPY_HOST_TO_DEVICE))
+        assert ret == 0, f"memcpy H2D: {ret}"
 
-        # Sync
-        ret = _safe_ret(acl.rt.synchronize_stream(self._stream))
-        if ret != 0:
-            raise RuntimeError(f"synchronize_stream failed: {ret}")
+        # ③ execute
+        ret = _get_ret(acl.mdl.execute(self._model_id,
+                                        self._input_ds,
+                                        self._output_ds,
+                                        self._stream))
+        assert ret == 0, f"execute: {ret}"
 
-        # D2H
-        output_np = np.empty(self._output_size, dtype=np.byte)
-        ret = _safe_ret(acl.rt.memcpy(output_np.ctypes.data, self._output_size,
-                                       self._output_buffer, self._output_size,
-                                       ACL_MEMCPY_DEVICE_TO_HOST))
-        if ret != 0:
-            raise RuntimeError(f"memcpy D2H failed: {ret}")
+        # ④ sync
+        ret = _get_ret(acl.rt.synchronize_stream(self._stream))
+        assert ret == 0, f"sync: {ret}"
 
-        return np.frombuffer(output_np.tobytes(), dtype=np.float32)
+        # ⑤ device → host (D2H)
+        ret = _get_ret(acl.rt.memcpy(self._host_output, self._output_size,
+                                      self._dev_output, self._output_size,
+                                      ACL_MEMCPY_DEVICE_TO_HOST))
+        assert ret == 0, f"memcpy D2H: {ret}"
+
+        # ⑥ host → numpy (H2H)
+        output = np.ctypeslib.as_array(
+            ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_float)),
+            shape=(self._output_size // 4,))
+        return output.copy()
 
     def close(self):
-        """释放资源"""
         try:
-            if self._input_buffer is not None:
-                acl.rt.free(self._input_buffer)
-            if self._output_buffer is not None:
-                acl.rt.free(self._output_buffer)
-            if self._input_dataset is not None:
-                acl.mdl.destroy_dataset(self._input_dataset)
-            if self._output_dataset is not None:
-                acl.mdl.destroy_dataset(self._output_dataset)
-            if self._model_id is not None:
+            if hasattr(self, '_dev_input') and self._dev_input:
+                acl.rt.free(self._dev_input)
+            if hasattr(self, '_dev_output') and self._dev_output:
+                acl.rt.free(self._dev_output)
+            if hasattr(self, '_host_input') and self._host_input:
+                acl.rt.free_host(self._host_input)
+            if hasattr(self, '_host_output') and self._host_output:
+                acl.rt.free_host(self._host_output)
+            if hasattr(self, '_input_ds') and self._input_ds:
+                acl.mdl.destroy_dataset(self._input_ds)
+            if hasattr(self, '_output_ds') and self._output_ds:
+                acl.mdl.destroy_dataset(self._output_ds)
+            if hasattr(self, '_model_id') and self._model_id:
                 acl.mdl.unload(self._model_id)
-            if self._model_desc is not None:
+            if hasattr(self, '_model_desc') and self._model_desc:
                 acl.mdl.destroy_desc(self._model_desc)
-            if self._stream is not None:
+            if hasattr(self, '_stream') and self._stream:
                 acl.rt.destroy_stream(self._stream)
         except:
             pass
         try:
             acl.rt.reset_device(self.device_id)
-        except:
-            pass
-        try:
             acl.finalize()
         except:
             pass
-        print("[NPU] 资源已释放")
+        print("[NPU] Released")
 
     def __del__(self):
         self.close()
@@ -205,25 +206,21 @@ def nms_fast(boxes, scores, iou_thres=0.45):
 def decode_npu_output(raw_output, img_w, img_h, num_classes=8,
                       conf_thres=0.5, iou_thres=0.45):
     """
-    解码 NPU 输出 → 检测框 (N, 6): [x1, y1, x2, y2, conf, cls_id]
+    解码 NPU 输出 → (N, 6): [x1,y1,x2,y2,conf,cls_id]
     """
     total = len(raw_output)
     nc = num_classes
-    expected = 4 + nc  # cx,cy,w,h + class_scores
+    expected = 4 + nc
 
     if total % expected != 0:
-        # 可能带 batch 维度
-        if total % (expected * 1) == 0:
-            pass  # OK
-        else:
-            print(f"[NPU解码] 无法解析输出: {total} 元素, 预期每anchor {expected}")
-            return np.empty((0, 6))
+        print(f"[NPUDecode] 输出元素 {total} 不匹配 4+{nc}={expected}")
+        return np.empty((0, 6))
 
     num_anchors = total // expected
     output = raw_output.reshape(1, expected, num_anchors)[0]
 
-    boxes_raw = output[:4, :]   # (4, A): cx, cy, w, h
-    scores_raw = output[4:, :]  # (nc, A)
+    boxes_raw = output[:4, :]
+    scores_raw = output[4:, :]
 
     max_scores = scores_raw.max(axis=0)
     max_cls = scores_raw.argmax(axis=0)
@@ -232,39 +229,32 @@ def decode_npu_output(raw_output, img_w, img_h, num_classes=8,
     if not mask.any():
         return np.empty((0, 6))
 
-    boxes_raw = boxes_raw[:, mask]
-    max_scores = max_scores[mask]
-    max_cls = max_cls[mask]
-
-    cx, cy, w, h = boxes_raw[0], boxes_raw[1], boxes_raw[2], boxes_raw[3]
+    cx, cy, w, h = boxes_raw[0, mask], boxes_raw[1, mask], boxes_raw[2, mask], boxes_raw[3, mask]
     x1 = (cx - w / 2) * img_w
     y1 = (cy - h / 2) * img_h
     x2 = (cx + w / 2) * img_w
     y2 = (cy + h / 2) * img_h
 
     boxes = np.stack([x1, y1, x2, y2], axis=1)
+    scores = max_scores[mask]
+    classes = max_cls[mask]
 
-    keep = nms_fast(boxes, max_scores, iou_thres)
+    keep = nms_fast(boxes, scores, iou_thres)
     if len(keep) == 0:
         return np.empty((0, 6))
 
-    return np.column_stack([
-        boxes[keep],
-        max_scores[keep][:, None],
-        max_cls[keep][:, None],
-    ])
+    return np.column_stack([boxes[keep], scores[keep, None], classes[keep, None]])
 
 
-# ── 测试入口 ─────────────────────────────────────────────────────────
+# ── Test ─────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
     import time
 
     om_file = 'best4.om'
-    if not os.path.exists(om_file):
-        print(f"❌ {om_file} 未找到"); sys.exit(1)
+    assert os.path.exists(om_file), f"{om_file} not found"
 
-    print(f"[NPU 测试] 加载 {om_file} ...")
+    print(f"[Test] Loading {om_file} ...")
     d = NPUDetector(om_file)
 
     dummy = np.random.randint(0, 255, (640, 640, 3), dtype=np.uint8)
@@ -276,8 +266,7 @@ if __name__ == '__main__':
         if i >= 5:
             times.append(t)
 
-    if times:
-        print(f"[NPU 测试] 推理速度: {np.mean(times):.1f}ms "
-              f"(min={np.min(times):.1f}, max={np.max(times):.1f})")
+    print(f"[Test] Inference: {np.mean(times):.1f}ms "
+          f"(min={np.min(times):.1f}, max={np.max(times):.1f})")
     d.close()
-    print("[NPU 测试] ✅ 完成")
+    print("[Test] Done")
