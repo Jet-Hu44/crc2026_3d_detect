@@ -105,7 +105,7 @@ class MainWindow(QMainWindow):
     # ==================== UI ====================
 
     def init_ui(self):
-        self.setWindowTitle('3D视觉识别 — NEEPU-HS')
+        self.setWindowTitle('3D视觉识别 — 观薪 NEEPU-VF')
         self.setGeometry(100, 100, 960, 540)
         self.setStyleSheet("background-color:#f5f5f5;")
 

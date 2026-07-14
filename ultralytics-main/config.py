@@ -28,7 +28,7 @@ NETMASK = '255.255.255.0'
 
 # ========== 队伍信息 ==========
 TEAM_ID = 'Y2507T1892934'
-TEAM_NAME = 'NEEPU-HS'  # 东北电力大学-幻视
+TEAM_NAME = 'NEEPU-VF'  # 东北电力大学-观薪 VisionFire
 
 # ========== 路径配置（香橙派上） ==========
 HOME_DIR = '/home/HwHiAiUser/Desktop/Round/ultralytics-main'

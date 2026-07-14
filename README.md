@@ -2,7 +2,7 @@
 
 > **2026 China Robot Competition & RoboCup China Open**
 > Robot Advanced Vision — 3D Recognition Event
-> Team: **NEEPU-HS** (Northeast Electric Power University)
+> Team: **NEEPU-VF** 观薪 VisionFire (Northeast Electric Power University)
 
 Built on **OrangePi AI Pro** (8T Ascend NPU, 16 GB RAM) with an **ORBBEC Astra Pro Plus** RGBD camera, this system performs real-time object detection and classification across two competition rounds.
 
