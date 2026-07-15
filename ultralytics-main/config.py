@@ -49,4 +49,4 @@ TEMPORAL_ALPHA = 0.7
 
 # ========== 模型 ==========
 DEFAULT_WEIGHTS = 'best4.pt'
-USE_NPU = False  # True=NPU 加速, False=PyTorch CPU（稳定版）
+USE_NPU = True   # True=NPU 加速 (~20ms), False=PyTorch CPU (~525ms)
