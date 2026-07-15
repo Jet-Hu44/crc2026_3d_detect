@@ -167,8 +167,8 @@ class NPUDetector:
         output = np.ctypeslib.as_array(
             ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_uint16)),
             shape=(self._output_size // 2,))
-        # FP16 → FP32（Ascend NPU 大端 → ARM 小端，需字节交换）
-        return output.byteswap(inplace=False).view(np.float16).astype(np.float32), ratio, (dw, dh)
+        # FP16 → FP32
+        return output.view(np.float16).astype(np.float32), ratio, (dw, dh)
 
     def close(self):
         if getattr(self, '_closed', False):
@@ -233,12 +233,26 @@ def decode_npu_output(raw_output, img_w, img_h, ratio=1.0, dw=0, dh=0,
     num_anchors = total // expected
     output = raw_output.reshape(1, expected, num_anchors)[0]
 
-    boxes_raw = output[:4, :]
-    scores_raw = output[4:, :]
+    # YOLOv8 ONNX 输出是 raw logits，需 sigmoid 激活到 [0,1]
+    def _sigmoid(x):
+        return 1 / (1 + np.exp(-np.clip(x, -50, 50)))
+
+    boxes_raw = output[:4, :].copy()
+    # 诊断：打印前 5 个 anchor 的原始值
+    if not hasattr(decode_npu_output, '_diag_done'):
+        decode_npu_output._diag_done = True
+        print(f"[NPU-SIGMOID] raw cx[:5]={output[0,:5]} "
+              f"raw cy[:5]={output[1,:5]} "
+              f"raw w[:5]={output[2,:5]} "
+              f"raw h[:5]={output[3,:5]}")
+        cx_test = _sigmoid(output[0, :5])
+        print(f"[NPU-SIGMOID] sigmoid(cx)[:5]={cx_test}")
+
+    boxes_raw[:2, :] = _sigmoid(boxes_raw[:2, :])  # cx, cy → [0,1]
+    scores_raw = _sigmoid(output[4:, :])              # class scores → [0,1]
 
     max_scores = scores_raw.max(axis=0)
     max_cls = scores_raw.argmax(axis=0)
-
     mask = max_scores > conf_thres
     if not mask.any():
         return np.empty((0, 6))
