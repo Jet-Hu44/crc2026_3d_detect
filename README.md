@@ -231,6 +231,26 @@ cd ~/Desktop
 ⑤ Score auto-saved to Result/
 ```
 
+### Data Collection (Training Dataset)
+
+```bash
+# Orange Pi — ORBBEC camera (RGB + Depth .npy)
+DISPLAY=:0 python3 capture_data_opi.py --class CB001 --count 60
+
+# Windows — any USB camera (RGB only)
+python capture_data_win.py --class CB001 --count 60 --camera 0
+```
+
+| Key | Action |
+|-----|--------|
+| **Enter** | Capture one photo |
+| **A** | Switch angle (0°/30°/60°/90°/top) |
+| **L** | Switch lighting (daylight/whiteLED/yellowLED/mix) |
+| **D** | Switch distance (0.6m/1.2m/1.8m) |
+| **Q** | Quit |
+
+Output: `dataset/images/{class}/{class}_{angle}_{light}_{dist}_{seq:04d}.jpg`
+
 ---
 
 ## Repository Structure
@@ -245,6 +265,8 @@ cd ~/Desktop
 │   ├── network.py              # JudgeBoxClient — TCP binary protocol
 │   ├── ocr_module.py           # LightweightOCR — Tesseract engine
 │   ├── train.py                # YOLO11 training script
+│   ├── capture_data_opi.py     # Training data capture (Orange Pi + ORBBEC)
+│   ├── capture_data_win.py     # Training data capture (Windows + USB cam)
 │   ├── export_onnx.py          # .pt → .onnx export for NPU
 │   ├── best4.pt                # Competition model (8-class, training data pending)
 │   ├── dataset/                # Training dataset (images/labels — pending collection)

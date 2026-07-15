@@ -271,6 +271,26 @@ cd ~/Desktop
 - Round 1: MinTime=20s, MaxTime=50s
 - Round 2: MinTime=70s, MaxTime=150s
 
+### 训练数据采集
+
+```bash
+# 香橙派 — ORBBEC 相机 (RGB + 深度 .npy)
+DISPLAY=:0 python3 capture_data_opi.py --class CB001 --count 60
+
+# Windows — 任意 USB 摄像头 (仅 RGB)
+python capture_data_win.py --class CB001 --count 60 --camera 0
+```
+
+| 按键 | 功能 |
+|------|------|
+| **Enter** | 拍照 |
+| **A** | 切换角度 (0°/30°/60°/90°/顶视) |
+| **L** | 切换光照 (日光/白光LED/黄光LED/混合) |
+| **D** | 切换距离 (近0.6m/中1.2m/远1.8m) |
+| **Q** | 退出 |
+
+输出目录: `dataset/images/{类别}/{类别}_{角度}_{光照}_{距离}_{序号}.jpg`
+
 ---
 
 ## 工程目录结构
@@ -285,6 +305,8 @@ cd ~/Desktop
 │   ├── network.py              # JudgeBoxClient — TCP 二进制协议
 │   ├── ocr_module.py           # LightweightOCR — Tesseract 引擎
 │   ├── train.py                # YOLO11 训练脚本
+│   ├── capture_data_opi.py     # 数据采集 (香橙派 + ORBBEC)
+│   ├── capture_data_win.py     # 数据采集 (Windows + USB 摄像头)
 │   ├── export_onnx.py          # .pt → .onnx 导出 (NPU 用)
 │   ├── best4.pt                # 比赛模型 (当前 8 类, 待采集训练数据)
 │   ├── dataset/                # 数据集目录 (images/labels — 待采集)
