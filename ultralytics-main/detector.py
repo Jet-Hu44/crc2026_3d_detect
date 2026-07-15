@@ -278,12 +278,25 @@ class YoloOrbbecDetector:
                                 distance = depth_mm
 
                     result_list.append([name, conf, x1, y1, x2, y2, distance])
-                    cv2.rectangle(opencv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    # 绘制框 (粗线 + 文字底色，确保可见)
+                    cv2.rectangle(opencv_image, (x1, y1), (x2, y2), (0, 255, 0), 3)
                     label = f"{name} {conf:.2f}"
                     if distance is not None:
                         label += f" {distance:.0f}mm"
-                    cv2.putText(opencv_image, label, (x1 - 5, y1 - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+                    # 文字背景黑条
+                    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
+                    ty = max(y1 - 8, th + 4)
+                    cv2.rectangle(opencv_image, (x1, ty - th - 4), (x1 + tw, ty + 4),
+                                  (0, 0, 0), -1)
+                    cv2.putText(opencv_image, label, (x1, ty),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    # 调试: 每 30 帧打印一次
+                    if not hasattr(self, '_npudebug_cnt'):
+                        self._npudebug_cnt = 0
+                    self._npudebug_cnt += 1
+                    if self._npudebug_cnt % 30 == 1:
+                        print(f"[NPU-DRAW] frame#{self._npudebug_cnt} "
+                              f"{len(detections)} boxes, e.g. {name}@{x1},{y1}")
             else:
                 # ── PyTorch CPU 推理 ──
                 results = self.model(opencv_image, conf=self.conf_thres, iou=IOU_THRES)

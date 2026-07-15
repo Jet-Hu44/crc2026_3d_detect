@@ -334,10 +334,10 @@ class MainWindow(QMainWindow):
         self.frame_idx += 1
 
     def display_image(self, image):
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).copy()
-        h, w, ch = rgb.shape
-        bytes_per_line = w * ch
-        qt_img = QImage(rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        # 存为实例变量，防止 numpy 数组被 GC 后 QImage 数据指针失效
+        self._rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB).copy()
+        h, w, ch = self._rgb.shape
+        qt_img = QImage(self._rgb.data, w, h, w * ch, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qt_img).scaled(
             self.image_label.width(), self.image_label.height(),
             Qt.KeepAspectRatio, Qt.SmoothTransformation)
