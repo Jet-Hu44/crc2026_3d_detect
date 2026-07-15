@@ -167,8 +167,8 @@ class NPUDetector:
         output = np.ctypeslib.as_array(
             ctypes.cast(self._host_output, ctypes.POINTER(ctypes.c_uint16)),
             shape=(self._output_size // 2,))
-        # FP16 → FP32
-        return output.view(np.float16).astype(np.float32), ratio, (dw, dh)
+        # FP16 → FP32（Ascend NPU 大端 → ARM 小端，需字节交换）
+        return output.byteswap(inplace=False).view(np.float16).astype(np.float32), ratio, (dw, dh)
 
     def close(self):
         if getattr(self, '_closed', False):
