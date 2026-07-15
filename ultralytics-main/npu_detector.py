@@ -233,23 +233,9 @@ def decode_npu_output(raw_output, img_w, img_h, ratio=1.0, dw=0, dh=0,
     num_anchors = total // expected
     output = raw_output.reshape(1, expected, num_anchors)[0]
 
-    # YOLOv8 ONNX 输出是 raw logits，需 sigmoid 激活到 [0,1]
-    def _sigmoid(x):
-        return 1 / (1 + np.exp(-np.clip(x, -50, 50)))
-
-    boxes_raw = output[:4, :].copy()
-    # 诊断：打印前 5 个 anchor 的原始值
-    if not hasattr(decode_npu_output, '_diag_done'):
-        decode_npu_output._diag_done = True
-        print(f"[NPU-SIGMOID] raw cx[:5]={output[0,:5]} "
-              f"raw cy[:5]={output[1,:5]} "
-              f"raw w[:5]={output[2,:5]} "
-              f"raw h[:5]={output[3,:5]}")
-        cx_test = _sigmoid(output[0, :5])
-        print(f"[NPU-SIGMOID] sigmoid(cx)[:5]={cx_test}")
-
-    boxes_raw[:2, :] = _sigmoid(boxes_raw[:2, :])  # cx, cy → [0,1]
-    scores_raw = _sigmoid(output[4:, :])              # class scores → [0,1]
+    # ONNX 模型已内建 sigmoid，输出已是激活后的值
+    boxes_raw = output[:4, :]    # [cx,cy,w,h] 已是 640×640 像素坐标
+    scores_raw = output[4:, :]   # [conf] 已是 [0,1] 置信度
 
     max_scores = scores_raw.max(axis=0)
     max_cls = scores_raw.argmax(axis=0)
@@ -257,17 +243,16 @@ def decode_npu_output(raw_output, img_w, img_h, ratio=1.0, dw=0, dh=0,
     if not mask.any():
         return np.empty((0, 6))
 
-    # 坐标映射：letterbox空间(640) → 原始图像空间
-    cx = boxes_raw[0, mask]
+    # 坐标已在 640×640 letterbox 像素空间，直接换算到原始图像
+    cx = boxes_raw[0, mask]  # 640×640 像素空间
     cy = boxes_raw[1, mask]
     bw = boxes_raw[2, mask]
     bh = boxes_raw[3, mask]
 
-    # 先去归一化到 letterbox 像素
-    x1 = (cx - bw / 2) * 640
-    y1 = (cy - bh / 2) * 640
-    x2 = (cx + bw / 2) * 640
-    y2 = (cy + bh / 2) * 640
+    x1 = cx - bw / 2
+    y1 = cy - bh / 2
+    x2 = cx + bw / 2
+    y2 = cy + bh / 2
 
     # 还原 letterbox → 原始图像坐标
     x1 = (x1 - dw) / ratio
